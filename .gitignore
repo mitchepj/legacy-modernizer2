@@ -1,0 +1,13 @@
+/target
+*.toml.bak
+
+# Cargo.lock IS committed deliberately (see README "Reproducible builds")
+# -- this is a binary, not a library, and an air-gapped/audited deployment
+# wants pinned dependency versions, not floating ones.
+
+# Per-engagement runtime state and generated output should not be
+# committed to the tool's own repo — each engagement's output belongs in
+# its own place, not mixed into this codebase's history.
+/modernization-output/
+/demo-output/
+*.legacy-modernizer.local.toml

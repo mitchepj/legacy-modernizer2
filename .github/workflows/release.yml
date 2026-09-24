@@ -1,0 +1,87 @@
+name: Release
+
+# This workflow runs in GitHub's own cloud runners. It compiles the
+# binary and attaches it to a GitHub Release. Nothing about this
+# workflow ever runs inside the air-gapped environment -- the air-gapped
+# side only ever receives the already-built binary produced here, carried
+# across the boundary by hand (see README.md, "Getting the binary into
+# the air-gapped environment").
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          # Fully static (musl libc) build -- no glibc version dependency,
+          # so this one binary runs on any x86_64 Linux target regardless
+          # of that machine's glibc version. This is the build to carry
+          # into an air-gapped Linux server whose exact distro/glibc you
+          # don't control.
+          - target: x86_64-unknown-linux-musl
+            artifact_name: legacy-modernizer-linux-x86_64-musl
+          # Standard glibc build, for convenience when the target machine
+          # is known and glibc-compatible.
+          - target: x86_64-unknown-linux-gnu
+            artifact_name: legacy-modernizer-linux-x86_64-gnu
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        run: |
+          rustup toolchain install stable --profile minimal --target ${{ matrix.target }}
+          rustup default stable
+
+      - name: Install musl build tools
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - name: Build release binary
+        run: cargo build --release --locked --target ${{ matrix.target }}
+
+      - name: Compute checksum
+        run: |
+          cd target/${{ matrix.target }}/release
+          sha256sum legacy-modernizer > legacy-modernizer.sha256
+          cp legacy-modernizer ../../../${{ matrix.artifact_name }}
+          cp legacy-modernizer.sha256 ../../../${{ matrix.artifact_name }}.sha256
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: |
+            ${{ matrix.artifact_name }}
+            ${{ matrix.artifact_name }}.sha256
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Flatten artifact layout
+        run: |
+          mkdir -p out
+          find artifacts -type f -exec cp {} out/ \;
+          ls -la out
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: out/*
+          generate_release_notes: true
